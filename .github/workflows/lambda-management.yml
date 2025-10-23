@@ -97,7 +97,7 @@ jobs:
           echo "Final JSON payload:"
           echo $secrets | jq '.'
 
-          echo "secrets_payload=$secrets" >> $GITHUB_OUTPUT
+          echo "secrets_payload=$(echo $secrets | jq -c .)" >> $GITHUB_OUTPUT
 
       - name: Invoke Lambda with secrets payload
         run: |
