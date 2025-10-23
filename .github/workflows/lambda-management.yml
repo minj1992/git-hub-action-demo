@@ -102,10 +102,11 @@ jobs:
       - name: Invoke Lambda with secrets payload
         run: |
           echo "Invoking Lambda..."
+          echo '{"secrets": ${{ steps.build.outputs.secrets_payload }}}' > payload.json
           aws lambda invoke \
             --function-name value3 \
             --invocation-type RequestResponse \
-            --payload "{\"secrets\": ${{ steps.build.outputs.secrets_payload }}}" \
+            --payload file://payload.json \
             response.json
           echo "Lambda response:"
           cat response.json
