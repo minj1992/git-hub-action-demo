@@ -26,31 +26,37 @@ def generate_strong_value():
             continue
         return value
 
-def lambda_handler(event, context):
+def rotate_secret(secret_name, exclude_keys):
     client = boto3.client('secretsmanager')
-    secret_id = event['SecretId']
-    token = event['ClientRequestToken']
+    current = client.get_secret_value(SecretId=secret_name)
+    secret_data = json.loads(current['SecretString'])
 
-    # List of keys to exclude from rotation
-    exclude_keys = ["apiKey", "serviceToken"]  # Add key names here
-
-    # Get current secret value
-    current_secret = client.get_secret_value(SecretId=secret_id)
-    secret_dict = json.loads(current_secret['SecretString'])
-
-    # Update all key values except those in exclude_keys
-    for key in secret_dict:
+    updated = 0
+    for key in secret_data:
         if key not in exclude_keys:
-            secret_dict[key] = generate_strong_value()
+            secret_data[key] = generate_strong_value()
+            updated += 1
 
-    # Store updated secret in AWSPENDING
     client.put_secret_value(
-        SecretId=secret_id,
-        ClientRequestToken=token,
-        SecretString=json.dumps(secret_dict)
+        SecretId=secret_name,
+        SecretString=json.dumps(secret_data)
     )
 
-    return {
-        "status": "success",
-        "message": f"Updated values for {len(secret_dict) - len(exclude_keys)} keys successfully. Excluded: {exclude_keys}"
-    }  
+    return {"secret": secret_name, "updated_keys": updated, "excluded": exclude_keys}
+
+def lambda_handler(event, context):
+    secrets = event.get('secrets', [])
+    if not secrets:
+        return {"status": "error", "message": "No secrets provided"}
+
+    results = []
+    for s in secrets:
+        name = s.get('name')
+        exclude = s.get('exclude', [])
+        try:
+            result = rotate_secret(name, exclude)
+            results.append(result)
+        except Exception as e:
+            results.append({"secret": name, "error": str(e)})
+
+    return {"status": "completed", "results": results}

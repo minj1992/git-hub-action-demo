@@ -1,0 +1,111 @@
+name: Lambda Management
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        type: choice
+        options:
+        - deploy
+        - rotate
+        default: 'rotate'
+      secret_value5:
+        description: "Rotate /sample/test/value5? (only for 'rotate' action)"
+        required: false
+        type: boolean
+        default: true
+      exclude_value5:
+        description: "Keys to exclude for /sample/test/value5 (comma separated)"
+        required: false
+        default: "apiKey,serviceToken"
+      secret_value4:
+        description: "Rotate /sample/test/value4? (only for 'rotate' action)"
+        required: false
+        type: boolean
+        default: false
+      exclude_value4:
+        description: "Keys to exclude for /sample/test/value4 (comma separated)"
+        required: false
+        default: ""
+      secret_value3:
+        description: "Rotate /sample/test/value3? (only for 'rotate' action)"
+        required: false
+        type: boolean
+        default: false
+      exclude_value3:
+        description: "Keys to exclude for /sample/test/value3 (comma separated)"
+        required: false
+        default: ""
+
+jobs:
+  deploy:
+    if: github.event.inputs.action == 'deploy'
+    runs-on: self-hosted
+    environment: prod
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v2
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1 # TODO: Change to your AWS region
+
+    - name: Zip Lambda function
+      run: Compress-Archive -Path lambda_function.py -DestinationPath function.zip -Force
+
+    - name: Deploy to Lambda
+      run: aws lambda update-function-code --function-name value3 --zip-file fileb://function.zip
+
+  rotate:
+    if: github.event.inputs.action == 'rotate'
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Build secrets JSON payload
+        id: build
+        run: |
+          echo "Preparing JSON payload for Lambda..."
+          secrets='[]'
+
+          if [ "${{ github.event.inputs.secret_value5 }}" == "true" ]; then
+            exclude_list=$(echo "${{ github.event.inputs.exclude_value5 }}" | tr ',' '\n' | awk '{$1=$1};1' | jq -R . | jq -s .)
+            secrets=$(echo $secrets | jq --argjson e "$exclude_list" '. += [{"name": "/sample/test/value5", "exclude": $e}]')
+          fi
+
+          if [ "${{ github.event.inputs.secret_value4 }}" == "true" ]; then
+            exclude_list=$(echo "${{ github.event.inputs.exclude_value4 }}" | tr ',' '\n' | awk '{$1=$1};1' | jq -R . | jq -s .)
+            secrets=$(echo $secrets | jq --argjson e "$exclude_list" '. += [{"name": "/sample/test/value4", "exclude": $e}]')
+          fi
+
+          if [ "${{ github.event.inputs.secret_value3 }}" == "true" ]; then
+            exclude_list=$(echo "${{ github.event.inputs.exclude_value3 }}" | tr ',' '\n' | awk '{$1=$1};1' | jq -R . | jq -s .)
+            secrets=$(echo $secrets | jq --argjson e "$exclude_list" '. += [{"name": "/sample/test/value3", "exclude": $e}]')
+          fi
+
+          echo "Final JSON payload:"
+          echo $secrets | jq '.'
+
+          echo "secrets_payload=$secrets" >> $GITHUB_OUTPUT
+
+      - name: Invoke Lambda with secrets payload
+        run: |
+          echo "Invoking Lambda..."
+          aws lambda invoke \
+            --function-name value3 \
+            --invocation-type RequestResponse \
+            --payload "{\"secrets\": ${{ steps.build.outputs.secrets_payload }}}" \
+            response.json
+          echo "Lambda response:"
+          cat response.json
