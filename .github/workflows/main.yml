@@ -1,0 +1,19 @@
+name: CI
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Run a one-line script
+      run: echo "build job"
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - name: Run a one-line script
+      run: echo "test job"
