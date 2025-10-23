@@ -5,6 +5,7 @@ on:
 jobs:
   deploy:
     runs-on: self-hosted
+    environment: prod
     steps:
     - name: Check out code
       uses: actions/checkout@v2
