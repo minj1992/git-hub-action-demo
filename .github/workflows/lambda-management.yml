@@ -12,32 +12,32 @@ on:
         - rotate
         default: 'rotate'
       secret_value5:
-        description: "Rotate /sample/test/value5? (only for 'rotate' action)"
+        description: "Rotate /sample/test/value1? (only for 'rotate' action)"
         required: false
         type: boolean
         default: true
       exclude_value5:
-        description: "Keys to exclude for /sample/test/value5 (comma separated)"
-        required: false
-        default: "apiKey,serviceToken"
-      secret_value4:
-        description: "Rotate /sample/test/value4? (only for 'rotate' action)"
-        required: false
-        type: boolean
-        default: false
-      exclude_value4:
-        description: "Keys to exclude for /sample/test/value4 (comma separated)"
+        description: "Keys to exclude for /sample/test/value1 (comma separated)"
         required: false
         default: ""
-      secret_value3:
-        description: "Rotate /sample/test/value3? (only for 'rotate' action)"
-        required: false
-        type: boolean
-        default: false
-      exclude_value3:
-        description: "Keys to exclude for /sample/test/value3 (comma separated)"
-        required: false
-        default: ""
+      # secret_value4:
+      #   description: "Rotate /sample/test/value4? (only for 'rotate' action)"
+      #   required: false
+      #   type: boolean
+      #   default: false
+      # exclude_value4:
+      #   description: "Keys to exclude for /sample/test/value4 (comma separated)"
+      #   required: false
+      #   default: ""
+      # secret_value3:
+      #   description: "Rotate /sample/test/value3? (only for 'rotate' action)"
+      #   required: false
+      #   type: boolean
+      #   default: false
+      # exclude_value3:
+      #   description: "Keys to exclude for /sample/test/value3 (comma separated)"
+      #   required: false
+      #   default: ""
 
 jobs:
   deploy:
@@ -84,15 +84,15 @@ jobs:
             secrets=$(echo $secrets | jq --argjson e "$exclude_list" '. += [{"name": "/sample/test/value5", "exclude": $e}]')
           fi
 
-          if [ "${{ github.event.inputs.secret_value4 }}" == "true" ]; then
-            exclude_list=$(echo "${{ github.event.inputs.exclude_value4 }}" | tr ',' '\n' | awk '{$1=$1};1' | jq -R . | jq -s .)
-            secrets=$(echo $secrets | jq --argjson e "$exclude_list" '. += [{"name": "/sample/test/value4", "exclude": $e}]')
-          fi
+          # if [ "${{ github.event.inputs.secret_value4 }}" == "true" ]; then
+          #   exclude_list=$(echo "${{ github.event.inputs.exclude_value4 }}" | tr ',' '\n' | awk '{$1=$1};1' | jq -R . | jq -s .)
+          #   secrets=$(echo $secrets | jq --argjson e "$exclude_list" '. += [{"name": "/sample/test/value4", "exclude": $e}]')
+          # fi
 
-          if [ "${{ github.event.inputs.secret_value3 }}" == "true" ]; then
-            exclude_list=$(echo "${{ github.event.inputs.exclude_value3 }}" | tr ',' '\n' | awk '{$1=$1};1' | jq -R . | jq -s .)
-            secrets=$(echo $secrets | jq --argjson e "$exclude_list" '. += [{"name": "/sample/test/value3", "exclude": $e}]')
-          fi
+          # if [ "${{ github.event.inputs.secret_value3 }}" == "true" ]; then
+          #   exclude_list=$(echo "${{ github.event.inputs.exclude_value3 }}" | tr ',' '\n' | awk '{$1=$1};1' | jq -R . | jq -s .)
+          #   secrets=$(echo $secrets | jq --argjson e "$exclude_list" '. += [{"name": "/sample/test/value3", "exclude": $e}]')
+          # fi
 
           echo "Final JSON payload:"
           echo $secrets | jq '.'
@@ -107,7 +107,6 @@ jobs:
             --function-name value3 \
             --invocation-type RequestResponse \
             --payload file://payload.json \
-            --cli-binary-format raw-in-base64-out \
             response.json
           echo "Lambda response:"
           cat response.json
