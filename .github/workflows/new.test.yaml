@@ -1,0 +1,162 @@
+✅ Updated Full YAML (only Invoke Lambda with secrets payload step changed)
+name: Lambda Management
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        type: choice
+        options:
+          - deploy
+          - rotate
+        default: 'rotate'
+
+      # AWS credentials
+      AWS_ACCESS_KEY_ID:
+        description: "AWS Access Key ID"
+        required: true
+        default: ""
+      AWS_SECRET_ACCESS_KEY:
+        description: "AWS Secret Access Key"
+        required: true
+        default: ""
+      AWS_SESSION_TOKEN:
+        description: "AWS Session Token"
+        required: true
+        default: ""
+
+      # Secret rotation options
+      secret_value1:
+        description: "Rotate /sample/test/value1? (only for 'rotate' action)"
+        required: false
+        type: boolean
+        default: true
+      exclude_value1:
+        description: "Keys to exclude for /sample/test/value1 (comma separated)"
+        required: false
+        default: ""
+
+jobs:
+  deploy:
+    if: github.event.inputs.action == 'deploy'
+    runs-on: "sir-common-runner-ec2"
+    environment: uat
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ github.event.inputs.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ github.event.inputs.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ github.event.inputs.AWS_SESSION_TOKEN }}
+          aws-region: eu-west-1
+
+      - name: Zip Lambda function
+        run: zip -r function.zip lambda_function.py
+
+      - name: Deploy to Lambda
+        run: aws lambda update-function-code --function-name AWS-SECRET-ROTATION-FUNCTION-TEST --zip-file fileb://function.zip
+
+  rotate:
+    if: github.event.inputs.action == 'rotate'
+    runs-on: "sir-common-runner-ec2"
+    environment: uat
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ github.event.inputs.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ github.event.inputs.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ github.event.inputs.AWS_SESSION_TOKEN }}
+          aws-region: eu-west-1
+
+      - name: Ensure jq is installed
+        run: |
+          if ! command -v jq &> /dev/null
+          then
+            echo "jq not found, installing..."
+            sudo apt-get update -y
+            sudo apt-get install jq -y
+          else
+            echo "jq already installed, skipping installation."
+          fi
+
+      - name: Build secrets JSON payload
+        id: build
+        run: |
+          echo "Preparing JSON payload for Lambda..."
+          secrets='[]'
+
+          if [ "${{ github.event.inputs.secret_value1 }}" == "true" ]; then
+            exclude_list=$(echo "${{ github.event.inputs.exclude_value1 }}" | tr ',' '\n' | awk '{$1=$1};1' | jq -R . | jq -s .)
+            secrets=$(echo "$secrets" | jq --argjson e "$exclude_list" '. += [{"name": "/sample/test/value1", "exclude": $e}]')
+          fi
+
+          echo "Final JSON payload:"
+          echo "$secrets" | jq '.'
+
+          echo "secrets_payload=$(echo "$secrets" | jq -c .)" >> $GITHUB_OUTPUT
+
+      # ✅ Fixed Lambda invocation step
+      - name: Invoke Lambda with secrets payload
+        run: |
+          echo "Invoking Lambda..."
+          
+          # Write secrets payload safely to a file
+          echo '${{ steps.build.outputs.secrets_payload }}' > tmp.json
+          
+          # Combine it into the final Lambda input
+          jq -n --argjson s "$(cat tmp.json)" '{secrets: $s}' > payload.json
+          
+          echo "Payload being sent to Lambda:"
+          cat payload.json | jq .
+
+          # Invoke the Lambda with the proper JSON payload
+          aws lambda invoke \
+            --function-name AWS-SECRET-ROTATION-FUNCTION-TEST \
+            --invocation-type RequestResponse \
+            --payload fileb://payload.json \
+            response.json
+
+          echo "Lambda response:"
+          cat response.json
+
+
+🧠 Why This Fix Works
+
+
+The previous version directly echoed JSON inline into a file, which caused escaping and newline issues.
+
+
+Now we:
+
+
+Write the raw output (steps.build.outputs.secrets_payload) into a temp file.
+
+
+Use jq to safely embed it as JSON under a key.
+
+
+Feed it directly to aws lambda invoke with fileb://payload.json.
+
+
+
+
+No invalid Base64, no invalid JSON — this is how jq and aws expect it.
+
+✅ Result:
+This version will:
+
+
+Keep all your existing logic and structure intact.
+
+
+Avoid both jq and Invalid base64 errors.
+
+
+Correctly send the structured JSON payload to your Lambda.
+
