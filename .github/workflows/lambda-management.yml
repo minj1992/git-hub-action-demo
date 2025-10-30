@@ -4,40 +4,48 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'Action to perform'
+        description: "Action to perform"
         required: true
         type: choice
         options:
-        - deploy
-        - rotate
-        default: 'rotate'
-      secret_value5:
-        description: "Rotate /sample/test/value1? (only for 'rotate' action)"
+          - deploy
+          - rotate
+        default: "rotate"
+
+      client_name:
+        description: "Select the client"
+        required: true
+        type: choice
+        options:
+          - client1
+          - client2
+          - client3
+        default: "client1"
+
+      environment:
+        description: "Select environment"
+        required: true
+        type: choice
+        options:
+          - dev
+          - stage
+          - prod
+        default: "prod"
+
+      secrets_to_rotate:
+        description: "Secrets to rotate (comma-separated)"
         required: false
-        type: boolean
-        default: true
-      exclude_value5:
-        description: "Keys to exclude for /sample/test/value1 (comma separated)"
+        default: "secret1,secret2"
+
+      exclude_secrets:
+        description: "Exclude secrets (comma-separated)"
         required: false
         default: ""
-      # secret_value4:
-      #   description: "Rotate /sample/test/value4? (only for 'rotate' action)"
-      #   required: false
-      #   type: boolean
-      #   default: false
-      # exclude_value4:
-      #   description: "Keys to exclude for /sample/test/value4 (comma separated)"
-      #   required: false
-      #   default: ""
-      # secret_value3:
-      #   description: "Rotate /sample/test/value3? (only for 'rotate' action)"
-      #   required: false
-      #   type: boolean
-      #   default: false
-      # exclude_value3:
-      #   description: "Keys to exclude for /sample/test/value3 (comma separated)"
-      #   required: false
-      #   default: ""
+
+      exclude_keys:
+        description: "Exclude keys inside each secret (comma-separated)"
+        required: false
+        default: ""
 
 jobs:
   deploy:
@@ -45,21 +53,21 @@ jobs:
     runs-on: self-hosted
     environment: prod
     steps:
-    - name: Check out code
-      uses: actions/checkout@v2
+      - name: Check out code
+        uses: actions/checkout@v2
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v1
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: us-east-1 # TODO: Change to your AWS region
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
 
-    - name: Zip Lambda function
-      run: Compress-Archive -Path lambda_function.py -DestinationPath function.zip -Force
+      - name: Zip Lambda function
+        run: Compress-Archive -Path lambda_function.py -DestinationPath function.zip -Force
 
-    - name: Deploy to Lambda
-      run: aws lambda update-function-code --function-name value3 --zip-file fileb://function.zip
+      - name: Deploy to Lambda
+        run: aws lambda update-function-code --function-name value3 --zip-file fileb://function.zip
 
   rotate:
     if: github.event.inputs.action == 'rotate'
@@ -77,22 +85,34 @@ jobs:
         id: build
         run: |
           echo "Preparing JSON payload for Lambda..."
+
+          # Inputs
+          client="${{ github.event.inputs.client_name }}"
+          env="${{ github.event.inputs.environment }}"
+          secrets_to_rotate="${{ github.event.inputs.secrets_to_rotate }}"
+          exclude_secrets="${{ github.event.inputs.exclude_secrets }}"
+          exclude_keys="${{ github.event.inputs.exclude_keys }}"
+
+          # Initialize JSON
           secrets='[]'
 
-          if [ "${{ github.event.inputs.secret_value5 }}" == "true" ]; then
-            exclude_list=$(echo "${{ github.event.inputs.exclude_value5 }}" | tr ',' '\n' | awk '{$1=$1};1' | jq -R . | jq -s .)
-            secrets=$(echo $secrets | jq --argjson e "$exclude_list" '. += [{"name": "/sample/test/value5", "exclude": $e}]')
-          fi
+          # Convert exclude lists to arrays
+          exclude_secret_list=$(echo "$exclude_secrets" | tr ',' '\n' | awk '{$1=$1};1' | jq -R . | jq -s .)
+          exclude_key_list=$(echo "$exclude_keys" | tr ',' '\n' | awk '{$1=$1};1' | jq -R . | jq -s .)
 
-          # if [ "${{ github.event.inputs.secret_value4 }}" == "true" ]; then
-          #   exclude_list=$(echo "${{ github.event.inputs.exclude_value4 }}" | tr ',' '\n' | awk '{$1=$1};1' | jq -R . | jq -s .)
-          #   secrets=$(echo $secrets | jq --argjson e "$exclude_list" '. += [{"name": "/sample/test/value4", "exclude": $e}]')
-          # fi
+          # Iterate through selected secrets
+          IFS=',' read -r -a secret_array <<< "$secrets_to_rotate"
+          for s in "${secret_array[@]}"; do
+            s_trimmed=$(echo "$s" | xargs)
+            # Skip excluded secrets
+            if echo "$exclude_secrets" | grep -qw "$s_trimmed"; then
+              echo "Skipping excluded secret: $s_trimmed"
+              continue
+            fi
 
-          # if [ "${{ github.event.inputs.secret_value3 }}" == "true" ]; then
-          #   exclude_list=$(echo "${{ github.event.inputs.exclude_value3 }}" | tr ',' '\n' | awk '{$1=$1};1' | jq -R . | jq -s .)
-          #   secrets=$(echo $secrets | jq --argjson e "$exclude_list" '. += [{"name": "/sample/test/value3", "exclude": $e}]')
-          # fi
+            path="/${client}/${env}/${s_trimmed}"
+            secrets=$(echo $secrets | jq --arg p "$path" --argjson e "$exclude_key_list" '. += [{"name": $p, "exclude_keys": $e}]')
+          done
 
           echo "Final JSON payload:"
           echo $secrets | jq '.'
@@ -102,11 +122,13 @@ jobs:
       - name: Invoke Lambda with secrets payload
         run: |
           echo "Invoking Lambda..."
-          echo '{"secrets": ${{ steps.build.outputs.secrets_payload }}}' > payload.json
+          jq -n --argjson secrets '${{ steps.build.outputs.secrets_payload }}' '{secrets: $secrets}' > payload.json
+
           aws lambda invoke \
             --function-name value3 \
             --invocation-type RequestResponse \
             --payload file://payload.json \
             response.json
+
           echo "Lambda response:"
           cat response.json
